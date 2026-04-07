@@ -3,7 +3,12 @@ import os
 from loguru import logger
 
 from mineru.utils.char_utils import full_to_half_exclude_marks, is_hyphen_at_line_end
-from mineru.utils.config_reader import get_latex_delimiter_config, get_formula_enable, get_table_enable
+from mineru.utils.config_reader import (
+    get_formula_enable,
+    get_latex_delimiter_config,
+    get_markdown_page_anchor_enable,
+    get_table_enable,
+)
 from mineru.utils.enum_class import MakeMode, BlockType, ContentType, ContentTypeV2
 from mineru.utils.language import detect_lang
 
@@ -20,6 +25,16 @@ display_left_delimiter = delimiters['display']['left']
 display_right_delimiter = delimiters['display']['right']
 inline_left_delimiter = delimiters['inline']['left']
 inline_right_delimiter = delimiters['inline']['right']
+
+
+def _page_anchor_enabled():
+    return get_markdown_page_anchor_enable(False)
+
+
+def _build_page_anchor(page_idx):
+    if page_idx is None:
+        return None
+    return f"[PAGE={int(page_idx) + 1}]"
 
 
 def merge_para_with_text(para_block, formula_enable=True, img_buket_path=''):
@@ -626,6 +641,10 @@ def union_make(pdf_info_dict: list,
             if not paras_of_layout:
                 continue
             page_markdown = mk_blocks_to_markdown(paras_of_layout, make_mode, formula_enable, table_enable, img_buket_path)
+            if page_markdown and _page_anchor_enabled():
+                page_anchor = _build_page_anchor(page_idx)
+                if page_anchor:
+                    output_content.append(page_anchor)
             output_content.extend(page_markdown)
         elif make_mode == MakeMode.CONTENT_LIST:
             para_blocks = (paras_of_layout or []) + (paras_of_discarded or [])

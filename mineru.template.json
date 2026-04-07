@@ -22,6 +22,7 @@
             "enable": false
         }
     },
+    "markdown-page-anchor-enable": false,
     "models-dir": {
         "pipeline": "",
         "vlm": ""
