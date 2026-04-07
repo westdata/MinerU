@@ -1,11 +1,15 @@
 # Copyright (c) Opendatalab. All rights reserved.
+import os
 import re
 from html import unescape
 
 from loguru import logger
 
 from mineru.utils.char_utils import full_to_half_exclude_marks, is_hyphen_at_line_end
-from mineru.utils.config_reader import get_latex_delimiter_config
+from mineru.utils.config_reader import (
+    get_latex_delimiter_config,
+    get_markdown_page_anchor_enable,
+)
 from mineru.backend.pipeline.para_split import ListLineTag
 from mineru.utils.enum_class import BlockType, ContentType, ContentTypeV2, MakeMode
 from mineru.utils.language import detect_lang
@@ -13,6 +17,16 @@ from mineru.backend.utils.markdown_utils import (
     escape_conservative_markdown_text,
     escape_text_block_markdown_prefix,
 )
+
+
+def _page_anchor_enabled():
+    return get_markdown_page_anchor_enable(False)
+
+
+def _build_page_anchor(page_idx):
+    if page_idx is None:
+        return None
+    return f"[PAGE={int(page_idx) + 1}]"
 
 
 def make_blocks_to_markdown(paras_of_layout,
@@ -982,6 +996,10 @@ def union_make(pdf_info_dict: list,
             if not paras_of_layout:
                 continue
             page_markdown = make_blocks_to_markdown(paras_of_layout, make_mode, img_buket_path)
+            if page_markdown and _page_anchor_enabled():
+                page_anchor = _build_page_anchor(page_idx)
+                if page_anchor:
+                    output_content.append(page_anchor)
             output_content.extend(page_markdown)
         elif make_mode == MakeMode.CONTENT_LIST:
             para_blocks = merge_adjacent_ref_text_blocks_for_content(

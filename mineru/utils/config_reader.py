@@ -125,6 +125,27 @@ def get_ocr_det_mask_inline_formula_enable(enable):
     return enable
 
 
+def get_markdown_page_anchor_enable(default: bool = False) -> bool:
+    enable_env = os.getenv('MINERU_MD_PAGE_ANCHOR')
+    if enable_env is not None:
+        return enable_env.lower() == 'true'
+
+    config = read_config()
+    if config is None:
+        return default
+
+    value = config.get('markdown-page-anchor-enable')
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+
+    logger.warning(
+        f"Invalid 'markdown-page-anchor-enable' value in {CONFIG_FILE_NAME}: {value}, use default {default}"
+    )
+    return default
+
+
 def get_processing_window_size(default: int = 64) -> int:
     value = os.getenv('MINERU_PROCESSING_WINDOW_SIZE')
     if value is None:
