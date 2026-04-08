@@ -220,6 +220,7 @@ def _process_output(
         f_dump_middle_json,
         f_dump_model_output,
         f_make_md_mode,
+        md_page_anchor,
         middle_json,
         model_output=None,
         process_mode="vlm",
@@ -261,7 +262,15 @@ def _process_output(
     image_dir = str(os.path.basename(local_image_dir))
 
     if f_dump_md:
-        md_content_str = make_func(pdf_info, f_make_md_mode, image_dir)
+        if process_mode in ["pipeline", "vlm"]:
+            md_content_str = make_func(
+                pdf_info,
+                f_make_md_mode,
+                image_dir,
+                md_page_anchor=md_page_anchor,
+            )
+        else:
+            md_content_str = make_func(pdf_info, f_make_md_mode, image_dir)
         md_writer.write_string(
             f"{pdf_file_name}.md",
             md_content_str,
@@ -313,6 +322,7 @@ def _process_pipeline(
         f_dump_orig_pdf,
         f_dump_content_list,
         f_make_md_mode,
+        md_page_anchor=False,
 ):
     """处理pipeline后端逻辑"""
     from mineru.backend.pipeline.pipeline_analyze import doc_analyze_streaming as pipeline_doc_analyze_streaming
@@ -340,7 +350,7 @@ def _process_pipeline(
                 middle_json["pdf_info"], pdf_bytes, pdf_file_name, local_md_dir, local_image_dir,
                 md_writer, f_draw_layout_bbox, f_draw_span_bbox, f_dump_orig_pdf,
                 f_dump_md, f_dump_content_list, f_dump_middle_json, f_dump_model_output,
-                f_make_md_mode, middle_json, model_list, process_mode="pipeline"
+                f_make_md_mode, md_page_anchor, middle_json, model_list, process_mode="pipeline"
             )
             logger.debug(f"Pipeline output complete: doc{doc_index}")
         except Exception:
@@ -383,6 +393,7 @@ async def _async_process_vlm(
         f_dump_orig_pdf,
         f_dump_content_list,
         f_make_md_mode,
+        md_page_anchor=False,
         server_url=None,
         **kwargs,
 ):
@@ -407,7 +418,7 @@ async def _async_process_vlm(
             pdf_info, pdf_bytes, pdf_file_name, local_md_dir, local_image_dir,
             md_writer, f_draw_layout_bbox, f_draw_span_bbox, f_dump_orig_pdf,
             f_dump_md, f_dump_content_list, f_dump_middle_json, f_dump_model_output,
-            f_make_md_mode, middle_json, infer_result, process_mode="vlm"
+            f_make_md_mode, md_page_anchor, middle_json, infer_result, process_mode="vlm"
         )
 
 
@@ -424,6 +435,7 @@ def _process_vlm(
         f_dump_orig_pdf,
         f_dump_content_list,
         f_make_md_mode,
+        md_page_anchor=False,
         server_url=None,
         **kwargs,
 ):
@@ -448,7 +460,7 @@ def _process_vlm(
             pdf_info, pdf_bytes, pdf_file_name, local_md_dir, local_image_dir,
             md_writer, f_draw_layout_bbox, f_draw_span_bbox, f_dump_orig_pdf,
             f_dump_md, f_dump_content_list, f_dump_middle_json, f_dump_model_output,
-            f_make_md_mode, middle_json, infer_result, process_mode="vlm"
+            f_make_md_mode, md_page_anchor, middle_json, infer_result, process_mode="vlm"
         )
 
 
@@ -468,6 +480,7 @@ def _process_hybrid(
         f_dump_orig_pdf,
         f_dump_content_list,
         f_make_md_mode,
+        md_page_anchor=False,
         server_url=None,
         **kwargs,
 ):
@@ -504,7 +517,7 @@ def _process_hybrid(
             pdf_info, pdf_bytes, pdf_file_name, local_md_dir, local_image_dir,
             md_writer, f_draw_layout_bbox, f_draw_span_bbox, f_dump_orig_pdf,
             f_dump_md, f_dump_content_list, f_dump_middle_json, f_dump_model_output,
-            f_make_md_mode, middle_json, infer_result, process_mode="vlm"
+            f_make_md_mode, md_page_anchor, middle_json, infer_result, process_mode="vlm"
         )
 
 
@@ -524,6 +537,7 @@ async def _async_process_hybrid(
         f_dump_orig_pdf,
         f_dump_content_list,
         f_make_md_mode,
+        md_page_anchor=False,
         server_url=None,
         **kwargs,
 ):
@@ -560,7 +574,7 @@ async def _async_process_hybrid(
             pdf_info, pdf_bytes, pdf_file_name, local_md_dir, local_image_dir,
             md_writer, f_draw_layout_bbox, f_draw_span_bbox, f_dump_orig_pdf,
             f_dump_md, f_dump_content_list, f_dump_middle_json, f_dump_model_output,
-            f_make_md_mode, middle_json, infer_result, process_mode="vlm"
+            f_make_md_mode, md_page_anchor, middle_json, infer_result, process_mode="vlm"
         )
 
 
@@ -574,6 +588,7 @@ def _process_office_doc(
         f_dump_orig_file=True,
         f_dump_content_list=True,
         f_make_md_mode=MakeMode.MM_MD,
+        md_page_anchor=False,
 ):
     need_remove_index = []
     for i, file_bytes in enumerate(pdf_bytes_list):
@@ -598,7 +613,7 @@ def _process_office_doc(
                 pdf_info, file_bytes, pdf_file_name, local_md_dir, local_image_dir,
                 md_writer, f_draw_layout_bbox, f_draw_span_bbox, f_dump_orig_file,
                 f_dump_md, f_dump_content_list, f_dump_middle_json, f_dump_model_output,
-                f_make_md_mode, middle_json, infer_result, process_mode="docx"
+                f_make_md_mode, md_page_anchor, middle_json, infer_result, process_mode="docx"
             )
         elif file_suffix in pptx_suffixes:
             need_remove_index.append(i)
@@ -628,6 +643,7 @@ def do_parse(
         f_dump_orig_pdf=True,
         f_dump_content_list=True,
         f_make_md_mode=MakeMode.MM_MD,
+        md_page_anchor=False,
         start_page_id=0,
         end_page_id=None,
         **kwargs,
@@ -659,7 +675,7 @@ def do_parse(
             output_dir, pdf_file_names, pdf_bytes_list, p_lang_list,
             parse_method, formula_enable, table_enable,
             f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
-            f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode
+            f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode, md_page_anchor
         )
     else:
         if backend.startswith("vlm-"):
@@ -678,6 +694,7 @@ def do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
+                md_page_anchor,
                 server_url, **kwargs,
             )
         elif backend.startswith("hybrid-"):
@@ -698,6 +715,7 @@ def do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, p_lang_list, parse_method, formula_enable, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
+                md_page_anchor,
                 server_url, **kwargs,
             )
 
@@ -720,6 +738,7 @@ async def aio_do_parse(
         f_dump_orig_pdf=True,
         f_dump_content_list=True,
         f_make_md_mode=MakeMode.MM_MD,
+        md_page_anchor=False,
         start_page_id=0,
         end_page_id=None,
         **kwargs,
@@ -752,7 +771,7 @@ async def aio_do_parse(
             output_dir, pdf_file_names, pdf_bytes_list, p_lang_list,
             parse_method, formula_enable, table_enable,
             f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
-            f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode
+            f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode, md_page_anchor
         )
     else:
         if backend.startswith("vlm-"):
@@ -771,6 +790,7 @@ async def aio_do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
+                md_page_anchor,
                 server_url, **kwargs,
             )
         elif backend.startswith("hybrid-"):
@@ -790,6 +810,7 @@ async def aio_do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, p_lang_list, parse_method, formula_enable, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
+                md_page_anchor,
                 server_url, **kwargs,
             )
 

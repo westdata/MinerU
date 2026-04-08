@@ -136,6 +136,7 @@ class ParseRequestOptions:
     parse_method: str
     formula_enable: bool
     table_enable: bool
+    md_page_anchor: bool
     server_url: Optional[str]
     return_md: bool
     return_middle_json: bool
@@ -167,6 +168,7 @@ class AsyncParseTask:
     lang_list: list[str]
     formula_enable: bool
     table_enable: bool
+    md_page_anchor: bool
     server_url: Optional[str]
     return_md: bool
     return_middle_json: bool
@@ -795,6 +797,10 @@ async def parse_request_form(
         bool,
         Form(description="Enable table parsing."),
     ] = True,
+    md_page_anchor: Annotated[
+        bool,
+        Form(description="Insert page-level anchors like [PAGE=1] into Markdown output."),
+    ] = False,
     server_url: Annotated[
         Optional[str],
         Form(
@@ -851,6 +857,7 @@ async def parse_request_form(
         parse_method=validate_parse_method(parse_method),
         formula_enable=formula_enable,
         table_enable=table_enable,
+        md_page_anchor=md_page_anchor,
         server_url=server_url,
         return_md=return_md,
         return_middle_json=return_middle_json,
@@ -958,6 +965,7 @@ async def run_parse_job(
         parse_method=request_options.parse_method,
         formula_enable=request_options.formula_enable,
         table_enable=request_options.table_enable,
+        md_page_anchor=request_options.md_page_anchor,
         server_url=request_options.server_url,
         f_draw_layout_bbox=False,
         f_draw_span_bbox=False,
@@ -1010,6 +1018,7 @@ async def create_async_parse_task(
             lang_list=request_options.lang_list,
             formula_enable=request_options.formula_enable,
             table_enable=request_options.table_enable,
+            md_page_anchor=request_options.md_page_anchor,
             server_url=request_options.server_url,
             return_md=request_options.return_md,
             return_middle_json=request_options.return_middle_json,

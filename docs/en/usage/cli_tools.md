@@ -21,6 +21,7 @@ Options:
   -e, --end INTEGER               Ending page number for parsing (0-based)
   -f, --formula BOOLEAN           Enable formula parsing (default: enabled)
   -t, --table BOOLEAN             Enable table parsing (default: enabled)
+  --md-page-anchor                Insert page-level anchors like [PAGE=1] into Markdown output. Disabled by default.
   --help                          Show help information
 ```
 > [!TIP]
@@ -115,11 +116,6 @@ Here are the environment variables and their descriptions:
 - `MINERU_TABLE_MERGE_ENABLE`:
     * Used to enable table merging functionality
     * Default is `true`, can be set to `false` via environment variable to disable table merging functionality.
-
-- `MINERU_MD_PAGE_ANCHOR`:
-    * Used to insert page-level anchors into Markdown output, such as `[PAGE=1]`
-    * Default is `false`; set it to `true` via environment variable to enable this feature.
-    * This only affects Markdown output and does not change JSON artifacts such as `content_list.json`.
 
 - `MINERU_PDF_RENDER_TIMEOUT`:
     * Used to set the timeout (in seconds) for rendering PDFs to images.

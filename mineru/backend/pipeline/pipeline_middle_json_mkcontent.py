@@ -5,18 +5,10 @@ from html import unescape
 from loguru import logger
 
 from mineru.utils.char_utils import full_to_half_exclude_marks, is_hyphen_at_line_end
-from mineru.utils.config_reader import (
-    get_latex_delimiter_config,
-    get_markdown_page_anchor_enable,
-)
+from mineru.utils.config_reader import get_latex_delimiter_config
 from mineru.backend.pipeline.para_split import ListLineTag
 from mineru.utils.enum_class import BlockType, ContentType, ContentTypeV2, MakeMode
 from mineru.utils.language import detect_lang
-
-
-def _page_anchor_enabled():
-    return get_markdown_page_anchor_enable(False)
-
 
 def _build_page_anchor(page_idx):
     if page_idx is None:
@@ -977,6 +969,7 @@ def make_blocks_to_content_list_v2(para_block, img_buket_path, page_size):
 def union_make(pdf_info_dict: list,
                make_mode: str,
                img_buket_path: str = '',
+               md_page_anchor: bool = False,
                ):
     output_content = []
     for page_info in pdf_info_dict:
@@ -988,7 +981,7 @@ def union_make(pdf_info_dict: list,
             if not paras_of_layout:
                 continue
             page_markdown = make_blocks_to_markdown(paras_of_layout, make_mode, img_buket_path)
-            if page_markdown and _page_anchor_enabled():
+            if page_markdown and md_page_anchor:
                 page_anchor = _build_page_anchor(page_idx)
                 if page_anchor:
                     output_content.append(page_anchor)

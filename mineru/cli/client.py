@@ -619,6 +619,7 @@ def build_request_form_data(
     method: str,
     formula_enable: bool,
     table_enable: bool,
+    md_page_anchor: bool,
     server_url: Optional[str],
     start_page_id: int,
     end_page_id: Optional[int],
@@ -629,6 +630,7 @@ def build_request_form_data(
         parse_method=method,
         formula_enable=formula_enable,
         table_enable=table_enable,
+        md_page_anchor=md_page_anchor,
         server_url=server_url,
         start_page_id=start_page_id,
         end_page_id=end_page_id,
@@ -843,6 +845,7 @@ async def run_orchestrated_cli(
     end_page_id: Optional[int],
     formula_enable: bool,
     table_enable: bool,
+    md_page_anchor: bool,
     extra_cli_args: tuple[str, ...] = (),
 ) -> None:
     if start_page_id < 0:
@@ -909,6 +912,7 @@ async def run_orchestrated_cli(
                 method=method,
                 formula_enable=formula_enable,
                 table_enable=table_enable,
+                md_page_anchor=md_page_anchor,
                 server_url=server_url,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
@@ -1088,6 +1092,13 @@ async def run_orchestrated_cli(
     default=True,
     help="Enable table parsing. Default is True. ",
 )
+@click.option(
+    "--md-page-anchor",
+    "md_page_anchor",
+    is_flag=True,
+    default=False,
+    help="Insert page-level anchors like [PAGE=1] into Markdown output. Default is disabled.",
+)
 def main(
     ctx: click.Context,
     input_path: Path,
@@ -1101,6 +1112,7 @@ def main(
     end_page_id: Optional[int],
     formula_enable: bool,
     table_enable: bool,
+    md_page_anchor: bool,
 ) -> None:
     asyncio.run(
         run_orchestrated_cli(
@@ -1115,6 +1127,7 @@ def main(
             end_page_id=end_page_id,
             formula_enable=formula_enable,
             table_enable=table_enable,
+            md_page_anchor=md_page_anchor,
             extra_cli_args=tuple(ctx.args),
         )
     )
