@@ -24,13 +24,15 @@ def _build_page_anchor(page_idx, page_idxs=None):
 
 
 def _get_anchor_page_idxs(paras_of_layout, page_idx):
-    if not paras_of_layout:
-        return [page_idx] if page_idx is not None else []
+    page_idxs = []
+    if page_idx is not None:
+        page_idxs.append(page_idx)
 
-    first_block = paras_of_layout[0]
-    if first_block.get('type') == BlockType.TABLE and first_block.get(SplitFlag.PAGE_IDXS):
-        return first_block[SplitFlag.PAGE_IDXS]
-    return [page_idx] if page_idx is not None else []
+    for block in paras_of_layout or []:
+        if block.get('type') == BlockType.TABLE and block.get(SplitFlag.PAGE_IDXS):
+            page_idxs.extend(block[SplitFlag.PAGE_IDXS])
+
+    return sorted(set(page_idxs))
 
 
 def make_blocks_to_markdown(paras_of_layout,
@@ -679,12 +681,16 @@ def make_blocks_to_content_list(para_block, img_buket_path, page_idx, page_size)
                         if span['type'] == ContentType.IMAGE:
                             if span.get('image_path', ''):
                                 para_content['img_path'] = f"{img_buket_path}/{span['image_path']}"
+                                para_content['text'] = para_content['img_path']
             if block['type'] == BlockType.IMAGE_CAPTION:
                 para_content[BlockType.IMAGE_CAPTION].append(merge_para_with_text(block))
             if block['type'] == BlockType.IMAGE_FOOTNOTE:
                 para_content[BlockType.IMAGE_FOOTNOTE].append(merge_para_with_text(block))
     elif para_type == BlockType.TABLE:
         para_content = {'type': ContentType.TABLE, 'img_path': '', BlockType.TABLE_CAPTION: [], BlockType.TABLE_FOOTNOTE: []}
+        anchor_text = para_block.get(SplitFlag.ANCHOR_TEXT, '')
+        if anchor_text:
+            para_content['text'] = anchor_text
         for block in para_block['blocks']:
             if block['type'] == BlockType.TABLE_BODY:
                 for line in block['lines']:

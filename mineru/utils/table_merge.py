@@ -1,6 +1,7 @@
 # Copyright (c) Opendatalab. All rights reserved.
 from copy import deepcopy
 from dataclasses import dataclass
+from html import escape
 from typing import Any
 
 from bs4 import BeautifulSoup
@@ -873,6 +874,15 @@ def _mark_merged_table_pages(
     previous_table_block[SplitFlag.PAGE_IDXS] = page_idxs
 
 
+def _get_first_nonempty_cell_text(rows, start_row_idx=0):
+    for row in rows[start_row_idx:]:
+        for cell in row.find_all(["td", "th"]):
+            cell_text = escape(_display_cell_text(cell), quote=False)
+            if cell_text:
+                return cell_text
+    return ""
+
+
 def merge_table(page_info_list):
     """合并跨页表格."""
     state_cache: dict[int, TableMergeState] = {}
@@ -908,6 +918,12 @@ def merge_table(page_info_list):
 
         if not can_merge_tables(current_state, previous_state):
             continue
+
+        header_count, _, _ = detect_table_headers(previous_state, current_state)
+        current_table_block[SplitFlag.ANCHOR_TEXT] = _get_first_nonempty_cell_text(
+            current_state.rows,
+            header_count,
+        )
 
         perform_table_merge(
             previous_state,

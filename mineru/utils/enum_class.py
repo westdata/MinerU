@@ -115,6 +115,7 @@ class SplitFlag:
     CROSS_PAGE = 'cross_page'
     LINES_DELETED = 'lines_deleted'
     PAGE_IDXS = 'page_idxs'
+    ANCHOR_TEXT = 'anchor_text'
 
 
 class ImageType:
