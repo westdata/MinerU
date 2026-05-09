@@ -851,6 +851,28 @@ def perform_table_merge(
     previous_state.dirty = True
 
 
+def _get_table_page_idxs(table_block, fallback_page_idx):
+    page_idxs = table_block.get(SplitFlag.PAGE_IDXS)
+    if page_idxs:
+        return [int(page_idx) for page_idx in page_idxs]
+    return [int(fallback_page_idx)]
+
+
+def _mark_merged_table_pages(
+    previous_table_block,
+    previous_page_idx,
+    current_table_block,
+    current_page_idx,
+):
+    page_idxs = sorted(
+        set(
+            _get_table_page_idxs(previous_table_block, previous_page_idx)
+            + _get_table_page_idxs(current_table_block, current_page_idx)
+        )
+    )
+    previous_table_block[SplitFlag.PAGE_IDXS] = page_idxs
+
+
 def merge_table(page_info_list):
     """合并跨页表格."""
     state_cache: dict[int, TableMergeState] = {}
@@ -892,6 +914,12 @@ def merge_table(page_info_list):
             current_state,
             previous_table_block,
             wait_merge_table_footnotes,
+        )
+        _mark_merged_table_pages(
+            previous_table_block,
+            previous_page_info["page_idx"],
+            current_table_block,
+            page_info["page_idx"],
         )
 
         merged_away_blocks.add(id(current_table_block))

@@ -114,6 +114,7 @@ class ModelPath:
 class SplitFlag:
     CROSS_PAGE = 'cross_page'
     LINES_DELETED = 'lines_deleted'
+    PAGE_IDXS = 'page_idxs'
 
 
 class ImageType:

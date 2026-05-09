@@ -8,17 +8,29 @@ from loguru import logger
 from mineru.utils.char_utils import full_to_half_exclude_marks, is_hyphen_at_line_end
 from mineru.utils.config_reader import get_latex_delimiter_config
 from mineru.backend.pipeline.para_split import ListLineTag
-from mineru.utils.enum_class import BlockType, ContentType, ContentTypeV2, MakeMode
+from mineru.utils.enum_class import BlockType, ContentType, ContentTypeV2, MakeMode, SplitFlag
 from mineru.utils.language import detect_lang
 from mineru.backend.utils.markdown_utils import (
     escape_conservative_markdown_text,
     escape_text_block_markdown_prefix,
 )
 
-def _build_page_anchor(page_idx):
-    if page_idx is None:
+def _build_page_anchor(page_idx, page_idxs=None):
+    anchor_page_idxs = page_idxs or ([page_idx] if page_idx is not None else [])
+    if not anchor_page_idxs:
         return None
-    return f"[PAGE={int(page_idx) + 1}]"
+    page_numbers = ",".join(str(int(anchor_page_idx) + 1) for anchor_page_idx in anchor_page_idxs)
+    return f"[PAGE={page_numbers}]"
+
+
+def _get_anchor_page_idxs(paras_of_layout, page_idx):
+    if not paras_of_layout:
+        return [page_idx] if page_idx is not None else []
+
+    first_block = paras_of_layout[0]
+    if first_block.get('type') == BlockType.TABLE and first_block.get(SplitFlag.PAGE_IDXS):
+        return first_block[SplitFlag.PAGE_IDXS]
+    return [page_idx] if page_idx is not None else []
 
 
 def make_blocks_to_markdown(paras_of_layout,
@@ -990,7 +1002,7 @@ def union_make(pdf_info_dict: list,
                 continue
             page_markdown = make_blocks_to_markdown(paras_of_layout, make_mode, img_buket_path)
             if page_markdown and md_page_anchor:
-                page_anchor = _build_page_anchor(page_idx)
+                page_anchor = _build_page_anchor(page_idx, _get_anchor_page_idxs(paras_of_layout, page_idx))
                 if page_anchor:
                     output_content.append(page_anchor)
             output_content.extend(page_markdown)
