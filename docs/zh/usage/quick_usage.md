@@ -34,6 +34,7 @@ mineru -p <input_path> -o <output_path>
   ```
   >[!TIP]
   >在浏览器中访问 `http://127.0.0.1:8000/docs` 查看API文档。
+  >如需对外网开放，建议额外传入 `--api-key <your_api_key>`，或配置环境变量 `MINERU_API_KEY` 开启接口认证。
   >
   >- 健康检查接口：`GET /health`
   >  返回 `protocol_version`、`processing_window_size`、`max_concurrent_requests` 等服务信息
@@ -49,10 +50,12 @@ mineru -p <input_path> -o <output_path>
   >- 默认任务完成或失败后保留 24 小时，随后自动清理任务状态和输出目录；清理后访问任务状态或结果会返回 `404`。
   >- 可通过环境变量 `MINERU_API_TASK_RETENTION_SECONDS` 和 `MINERU_API_TASK_CLEANUP_INTERVAL_SECONDS` 调整保留时长与清理轮询间隔。
   >- 可通过 `--enable-vlm-preload true` 在服务启动阶段预热本地 VLM 模型，避免首次 VLM 或 hybrid 请求时再初始化。
+  >- 配置 `--api-key` 或环境变量 `MINERU_API_KEY` 后，所有接口请求都需要携带 `Authorization: Bearer <your_api_key>` 或 `X-API-Key: <your_api_key>`。
   >
   >异步任务提交示例：
   >```bash
   >curl -X POST http://127.0.0.1:8000/tasks \
+  >  -H "Authorization: Bearer <your_api_key>" \
   >  -F "files=@demo/pdfs/demo1.pdf" \
   >  -F "return_md=true"
   >```
@@ -60,6 +63,7 @@ mineru -p <input_path> -o <output_path>
   >同步解析示例：
   >```bash
   >curl -X POST http://127.0.0.1:8000/file_parse \
+  >  -H "Authorization: Bearer <your_api_key>" \
   >  -F "files=@demo/pdfs/demo1.pdf" \
   >  -F "return_md=true" \
   >  -F "response_format_zip=true" \
@@ -68,9 +72,9 @@ mineru -p <input_path> -o <output_path>
   >
   >轮询任务状态与结果：
   >```bash
-  >curl http://127.0.0.1:8000/tasks/<task_id>
-  >curl http://127.0.0.1:8000/tasks/<task_id>/result
-  >curl http://127.0.0.1:8000/health
+  >curl -H "Authorization: Bearer <your_api_key>" http://127.0.0.1:8000/tasks/<task_id>
+  >curl -H "Authorization: Bearer <your_api_key>" http://127.0.0.1:8000/tasks/<task_id>/result
+  >curl -H "Authorization: Bearer <your_api_key>" http://127.0.0.1:8000/health
   >```
   >
   >http异步调用代码示例：[Python版本](https://github.com/opendatalab/MinerU/blob/master/demo/demo.py)
@@ -93,6 +97,7 @@ mineru -p <input_path> -o <output_path>
   >[!TIP]
   >
   >- `mineru-router` 对外暴露与 `mineru-api` 一致的 `/health`、`/tasks`、`/file_parse`、`/tasks/{task_id}`、`/tasks/{task_id}/result` 接口。
+  >- `mineru-router` 同样支持 `--api-key <your_api_key>` 或环境变量 `MINERU_API_KEY` 开启认证；配置后对外请求也需要携带相同的请求头。
   >- 可重复使用 `--upstream-url` 聚合多个已有 `mineru-api` 服务，也可通过 `--local-gpus` 自动拉起本地 worker。
   >- `--enable-vlm-preload true` 仅作用于 router 托管的本地 worker，不会影响通过 `--upstream-url` 接入的远端服务。
   >- 适用于多服务、多 GPU 和统一入口部署场景。

@@ -24,6 +24,12 @@ from loguru import logger
 from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from mineru.cli.api_auth import (
+    MINERU_API_KEY_ENV,
+    build_api_auth_headers,
+    resolve_configured_api_key,
+    validate_api_key_request,
+)
 from mineru.cli.api_client import (
     LOCAL_API_CLEANUP_RETRIES,
     LOCAL_API_CLEANUP_RETRY_INTERVAL_SECONDS,
@@ -286,6 +292,7 @@ class RouterSettings:
     local_gpus: str = LOCAL_GPU_AUTO
     worker_host: str = "127.0.0.1"
     enable_vlm_preload: bool = False
+    api_key: str | None = None
     worker_extra_args: tuple[str, ...] = ()
     task_retention_seconds: int = DEFAULT_TASK_RETENTION_SECONDS
     task_cleanup_interval_seconds: int = DEFAULT_TASK_CLEANUP_INTERVAL_SECONDS
@@ -301,6 +308,7 @@ class RouterSettings:
                 "MINERU_ROUTER_ENABLE_VLM_PRELOAD",
                 default=False,
             ),
+            api_key=resolve_configured_api_key(os.getenv(MINERU_API_KEY_ENV)),
             worker_extra_args=parse_json_env("MINERU_ROUTER_WORKER_ARGS_JSON"),
             task_retention_seconds=get_task_retention_seconds(),
             task_cleanup_interval_seconds=get_task_cleanup_interval_seconds(),
@@ -371,6 +379,7 @@ class ManagedLocalServer:
     worker_host: str
     gpu: str | None
     enable_vlm_preload: bool
+    api_key: str | None
     extra_cli_args: tuple[str, ...]
     connect_host: str = field(init=False)
     base_url: str | None = None
@@ -402,6 +411,8 @@ class ManagedLocalServer:
         env = os.environ.copy()
         env["MINERU_API_OUTPUT_ROOT"] = str(output_root)
         env["MINERU_API_DISABLE_ACCESS_LOG"] = "1"
+        if self.api_key:
+            env[MINERU_API_KEY_ENV] = self.api_key
         if self.gpu is not None:
             env[get_local_device_visible_env_name()] = str(self.gpu)
 
@@ -441,7 +452,10 @@ class ManagedLocalServer:
             if self.process is not None and self.process.poll() is not None:
                 raise RuntimeError(f"Local worker {self.server_id} exited before becoming healthy")
             try:
-                response = await client.get(f"{self.base_url}{HEALTH_ENDPOINT}")
+                response = await client.get(
+                    f"{self.base_url}{HEALTH_ENDPOINT}",
+                    headers=build_api_auth_headers(self.api_key),
+                )
                 if response.status_code == 200:
                     return
                 last_error = response_detail(response)
@@ -558,6 +572,7 @@ class WorkerPool:
                 worker_host=self.settings.worker_host,
                 gpu=gpu,
                 enable_vlm_preload=self.settings.enable_vlm_preload,
+                api_key=self.settings.api_key,
                 extra_cli_args=self.settings.worker_extra_args,
             )
             self._servers[server_id] = WorkerState(
@@ -665,7 +680,10 @@ class WorkerPool:
             return
 
         try:
-            response = await self.client.get(f"{server.base_url}{HEALTH_ENDPOINT}")
+            response = await self.client.get(
+                f"{server.base_url}{HEALTH_ENDPOINT}",
+                headers=build_api_auth_headers(self.settings.api_key),
+            )
         except httpx.HTTPError as exc:
             server.healthy = False
             server.last_error = str(exc)
@@ -714,7 +732,10 @@ class WorkerPool:
         try:
             await local_server.restart(self.client)
             server.base_url = normalize_base_url(local_server.base_url or "")
-            response = await self.client.get(f"{server.base_url}{HEALTH_ENDPOINT}")
+            response = await self.client.get(
+                f"{server.base_url}{HEALTH_ENDPOINT}",
+                headers=build_api_auth_headers(self.settings.api_key),
+            )
             if response.status_code == 200:
                 server.last_checked_at = utc_now_iso()
                 payload = _parse_json_object_response(response, "health payload")
@@ -1087,6 +1108,7 @@ def parse_submit_response(payload: Any) -> dict[str, Any]:
 def submit_payload_to_upstream_sync(
     base_url: str,
     payload: MultipartPayload,
+    api_key: str | None = None,
 ) -> dict[str, Any]:
     with ExitStack() as stack, httpx.Client(
         timeout=build_http_timeout(),
@@ -1116,6 +1138,7 @@ def submit_payload_to_upstream_sync(
             response = client.post(
                 f"{base_url}{TASKS_ENDPOINT}",
                 files=multipart,
+                headers=build_api_auth_headers(api_key),
             )
         except httpx.HTTPError as exc:
             raise UpstreamSubmissionUnavailable(str(exc)) from exc
@@ -1136,8 +1159,14 @@ def submit_payload_to_upstream_sync(
 async def submit_payload_to_upstream(
     base_url: str,
     payload: MultipartPayload,
+    api_key: str | None = None,
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(submit_payload_to_upstream_sync, base_url, payload)
+    return await asyncio.to_thread(
+        submit_payload_to_upstream_sync,
+        base_url,
+        payload,
+        api_key,
+    )
 
 
 async def submit_router_task(
@@ -1167,7 +1196,11 @@ async def submit_router_task(
             raise HTTPException(status_code=503, detail=last_error)
 
         try:
-            upstream_payload = await submit_payload_to_upstream(server.base_url, payload)
+            upstream_payload = await submit_payload_to_upstream(
+                server.base_url,
+                payload,
+                worker_pool.settings.api_key,
+            )
             file_names = upstream_payload["file_names"]
             normalized_file_names = (
                 list(file_names)
@@ -1208,7 +1241,12 @@ async def fetch_router_task_status(
     client: httpx.AsyncClient = request.app.state.http_client
     url = f"{task.upstream_base_url}{TASKS_ENDPOINT}/{task.upstream_task_id}"
     try:
-        response = await client.get(url)
+        response = await client.get(
+            url,
+            headers=build_api_auth_headers(
+                request.app.state.router_settings.api_key
+            ),
+        )
     except httpx.HTTPError as exc:
         updated = await registry.increment_upstream_error(task.task_id, str(exc))
         if updated is None:
@@ -1269,6 +1307,9 @@ async def proxy_router_task_result(
             client.build_request(
                 "GET",
                 result_url,
+                headers=build_api_auth_headers(
+                    request.app.state.router_settings.api_key
+                ),
                 timeout=build_result_download_timeout(),
             ),
             stream=True,
@@ -1324,6 +1365,9 @@ async def build_sync_router_task_result_response(
             client.build_request(
                 "GET",
                 result_url,
+                headers=build_api_auth_headers(
+                    request.app.state.router_settings.api_key
+                ),
                 timeout=build_result_download_timeout(),
             ),
             stream=True,
@@ -1411,6 +1455,7 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.router_settings = resolved_settings
+    app.state.api_key = resolved_settings.api_key
     configure_public_http_client_policy(
         app,
         public_bind_exposed=env_flag_enabled(
@@ -1424,8 +1469,12 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
     )
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+    def enforce_api_auth(request: Request) -> None:
+        validate_api_key_request(request)
+
     @app.post(path="/tasks", status_code=202)
     async def submit_parse_task(http_request: Request):
+        enforce_api_auth(http_request)
         payload = await stage_multipart_request(http_request)
         try:
             router_task = await submit_router_task(http_request, payload)
@@ -1437,6 +1486,7 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
 
     @app.get(path="/tasks/{task_id}", name="get_router_task_status")
     async def get_router_task_status(task_id: str, request: Request):
+        enforce_api_auth(request)
         registry: RouterTaskRegistry = request.app.state.router_task_registry
         task = await registry.get(task_id)
         if task is None:
@@ -1446,6 +1496,7 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
 
     @app.get(path="/tasks/{task_id}/result", name="get_router_task_result")
     async def get_router_task_result(task_id: str, request: Request):
+        enforce_api_auth(request)
         registry: RouterTaskRegistry = request.app.state.router_task_registry
         task = await registry.get(task_id)
         if task is None:
@@ -1472,6 +1523,7 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
 
     @app.post(path="/file_parse", status_code=200)
     async def file_parse(request: Request):
+        enforce_api_auth(request)
         payload = await stage_multipart_request(request)
         try:
             router_task = await submit_router_task(request, payload)
@@ -1492,6 +1544,7 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
 
     @app.get(path="/health")
     async def health_check(request: Request):
+        enforce_api_auth(request)
         worker_pool: WorkerPool = request.app.state.worker_pool
         healthy, payload = worker_pool.health_payload()
         if healthy:
@@ -1511,6 +1564,14 @@ app = create_app()
 @click.option("--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)")
 @click.option("--port", default=8002, type=int, help="Server port (default: 8002)")
 @click.option("--reload", is_flag=True, help="Enable auto-reload (development mode)")
+@click.option(
+    "--api-key",
+    default=None,
+    help=(
+        "Optional API key required by all endpoints. Also supports the "
+        f"{MINERU_API_KEY_ENV} environment variable."
+    ),
+)
 @click.option(
     "--allow-public-http-client",
     is_flag=True,
@@ -1547,6 +1608,7 @@ def main(
     host: str,
     port: int,
     reload: bool,
+    api_key: str | None,
     allow_public_http_client: bool,
     upstream_urls: tuple[str, ...],
     local_gpus: str,
@@ -1558,6 +1620,7 @@ def main(
         local_gpus=local_gpus,
         worker_host=worker_host,
         enable_vlm_preload=enable_vlm_preload,
+        api_key=resolve_configured_api_key(api_key or os.getenv(MINERU_API_KEY_ENV)),
         worker_extra_args=tuple(ctx.args),
         task_retention_seconds=get_task_retention_seconds(),
         task_cleanup_interval_seconds=get_task_cleanup_interval_seconds(),
@@ -1575,6 +1638,8 @@ def main(
     os.environ["MINERU_ROUTER_ENABLE_VLM_PRELOAD"] = (
         "1" if settings.enable_vlm_preload else "0"
     )
+    if settings.api_key:
+        os.environ[MINERU_API_KEY_ENV] = settings.api_key
     os.environ["MINERU_ROUTER_WORKER_ARGS_JSON"] = json.dumps(list(settings.worker_extra_args))
     os.environ[MINERU_ROUTER_PUBLIC_BIND_EXPOSED_ENV] = (
         "1" if public_bind_exposed else "0"

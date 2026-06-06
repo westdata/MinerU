@@ -44,6 +44,11 @@ from mineru.cli.common import (
     read_fn,
     uniquify_task_stems,
 )
+from mineru.cli.api_auth import (
+    MINERU_API_KEY_ENV,
+    resolve_configured_api_key,
+    validate_api_key_request,
+)
 from mineru.cli.public_http_client_policy import (
     configure_public_http_client_policy,
     is_public_bind_host,
@@ -262,6 +267,7 @@ def create_app():
         logger.info(f"Request concurrency limited to {max_concurrent_requests}")
 
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+    app.state.api_key = resolve_configured_api_key(os.getenv(MINERU_API_KEY_ENV))
     app.state.public_bind_exposed = env_flag_enabled(
         MINERU_API_PUBLIC_BIND_EXPOSED_ENV,
         default=False,
@@ -1401,6 +1407,10 @@ def get_task_manager() -> AsyncTaskManager:
     return task_manager
 
 
+def enforce_api_auth(request: Request) -> None:
+    validate_api_key_request(request)
+
+
 @app.post(
     path="/file_parse",
     status_code=200,
@@ -1413,6 +1423,7 @@ def get_task_manager() -> AsyncTaskManager:
 async def parse_pdf(
     http_request: Request,
     background_tasks: BackgroundTasks,
+    _auth: Annotated[None, Depends(enforce_api_auth)],
     request_options: Annotated[
         ParseRequestOptions, Depends(parse_request_form)
     ],
@@ -1460,6 +1471,7 @@ async def parse_pdf(
 )
 async def submit_parse_task(
     http_request: Request,
+    _auth: Annotated[None, Depends(enforce_api_auth)],
     request_options: Annotated[
         ParseRequestOptions, Depends(parse_request_form)
     ],
@@ -1470,7 +1482,11 @@ async def submit_parse_task(
 
 
 @app.get(path="/tasks/{task_id}", name="get_async_task_status")
-async def get_async_task_status(task_id: str, request: Request):
+async def get_async_task_status(
+    task_id: str,
+    request: Request,
+    _auth: Annotated[None, Depends(enforce_api_auth)],
+):
     task_manager = get_task_manager()
     task = task_manager.get(task_id)
     if task is None:
@@ -1483,6 +1499,7 @@ async def get_async_task_result(
     task_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
+    _auth: Annotated[None, Depends(enforce_api_auth)],
 ):
     task_manager = get_task_manager()
     task = task_manager.get(task_id)
@@ -1526,7 +1543,10 @@ async def get_async_task_result(
 
 
 @app.get(path="/health")
-async def health_check():
+async def health_check(
+    request: Request,
+    _auth: Annotated[None, Depends(enforce_api_auth)],
+):
     task_manager = getattr(app.state, "task_manager", None)
     if task_manager is None or not task_manager.is_healthy():
         return JSONResponse(
@@ -1576,6 +1596,14 @@ async def health_check():
 @click.option("--port", default=8000, type=int, help="Server port (default: 8000)")
 @click.option("--reload", is_flag=True, help="Enable auto-reload (development mode)")
 @click.option(
+    "--api-key",
+    default=None,
+    help=(
+        "Optional API key required by all endpoints. Also supports the "
+        f"{MINERU_API_KEY_ENV} environment variable."
+    ),
+)
+@click.option(
     "--allow-public-http-client",
     is_flag=True,
     help=(
@@ -1595,6 +1623,7 @@ def main(
     host,
     port,
     reload,
+    api_key,
     allow_public_http_client,
     enable_vlm_preload,
     **kwargs,
@@ -1605,8 +1634,10 @@ def main(
     service_config, model_config = split_service_and_model_config(raw_config)
     public_bind_exposed = is_public_bind_host(host)
 
+    resolved_api_key = resolve_configured_api_key(api_key or os.getenv(MINERU_API_KEY_ENV))
     app.state.service_config = service_config
     app.state.config = model_config
+    app.state.api_key = resolved_api_key
     configure_public_http_client_policy(
         app,
         public_bind_exposed=public_bind_exposed,
@@ -1615,6 +1646,8 @@ def main(
     os.environ["MINERU_API_ENABLE_VLM_PRELOAD"] = (
         "1" if service_config["enable_vlm_preload"] else "0"
     )
+    if resolved_api_key:
+        os.environ[MINERU_API_KEY_ENV] = resolved_api_key
     os.environ[MINERU_API_PUBLIC_BIND_EXPOSED_ENV] = "1" if public_bind_exposed else "0"
     os.environ[MINERU_API_ALLOW_PUBLIC_HTTP_CLIENT_ENV] = (
         "1" if allow_public_http_client else "0"

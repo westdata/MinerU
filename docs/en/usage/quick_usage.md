@@ -34,6 +34,7 @@ If you need to adjust parsing options through custom parameters, you can also ch
   ```
   >[!TIP]
   >Access `http://127.0.0.1:8000/docs` in your browser to view the API documentation.
+  >If you expose the service publicly, we recommend enabling authentication with `--api-key <your_api_key>` or the `MINERU_API_KEY` environment variable.
   >
   >- Health endpoint: `GET /health`
   >  Returns `protocol_version`, `processing_window_size`, `max_concurrent_requests`, and task stats
@@ -49,10 +50,12 @@ If you need to adjust parsing options through custom parameters, you can also ch
   >- Completed or failed tasks are retained for 24 hours by default, then their task state and output directory are cleaned automatically. After cleanup, task status and result endpoints return `404`.
   >- Use `MINERU_API_TASK_RETENTION_SECONDS` and `MINERU_API_TASK_CLEANUP_INTERVAL_SECONDS` to adjust retention and cleanup polling intervals.
   >- Use `--enable-vlm-preload true` to warm up the local VLM model during service startup instead of waiting for the first VLM or hybrid request.
+  >- When `--api-key` or `MINERU_API_KEY` is configured, every endpoint requires either `Authorization: Bearer <your_api_key>` or `X-API-Key: <your_api_key>`.
   >
   >Asynchronous task submission example:
   >```bash
   >curl -X POST http://127.0.0.1:8000/tasks \
+  >  -H "Authorization: Bearer <your_api_key>" \
   >  -F "files=@demo/pdfs/demo1.pdf" \
   >  -F "return_md=true"
   >```
@@ -60,6 +63,7 @@ If you need to adjust parsing options through custom parameters, you can also ch
   >Synchronous parsing example:
   >```bash
   >curl -X POST http://127.0.0.1:8000/file_parse \
+  >  -H "Authorization: Bearer <your_api_key>" \
   >  -F "files=@demo/pdfs/demo1.pdf" \
   >  -F "return_md=true" \
   >  -F "response_format_zip=true" \
@@ -68,9 +72,9 @@ If you need to adjust parsing options through custom parameters, you can also ch
   >
   >Poll task status and fetch results:
   >```bash
-  >curl http://127.0.0.1:8000/tasks/<task_id>
-  >curl http://127.0.0.1:8000/tasks/<task_id>/result
-  >curl http://127.0.0.1:8000/health
+  >curl -H "Authorization: Bearer <your_api_key>" http://127.0.0.1:8000/tasks/<task_id>
+  >curl -H "Authorization: Bearer <your_api_key>" http://127.0.0.1:8000/tasks/<task_id>/result
+  >curl -H "Authorization: Bearer <your_api_key>" http://127.0.0.1:8000/health
   >```
   >
   >HTTP asynchronous call code example: [Python version](https://github.com/opendatalab/MinerU/blob/master/demo/demo.py)
@@ -93,6 +97,7 @@ If you need to adjust parsing options through custom parameters, you can also ch
   >[!TIP]
   >
   >- `mineru-router` exposes the same `/health`, `/tasks`, `/file_parse`, `/tasks/{task_id}`, and `/tasks/{task_id}/result` interface set as `mineru-api`.
+  >- `mineru-router` also supports `--api-key <your_api_key>` or `MINERU_API_KEY`; once configured, external requests must include the same auth header.
   >- Repeat `--upstream-url` to aggregate multiple existing `mineru-api` services, or use `--local-gpus` to launch local workers automatically.
   >- `--enable-vlm-preload true` only applies to router-managed local workers. It does not preload remote services passed through `--upstream-url`.
   >- It is intended for advanced multi-service, multi-GPU, and unified-entry deployments.
