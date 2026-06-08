@@ -1,26 +1,28 @@
 # Copyright (c) Opendatalab. All rights reserved.
 import copy
-import os
-import time
 
-from loguru import logger
 from tqdm import tqdm
 
 from mineru.backend.utils.html_image_utils import replace_inline_table_images
 from mineru.backend.utils.runtime_utils import cross_page_table_merge
-from mineru.utils.config_reader import get_device, get_llm_aided_config
-from mineru.backend.pipeline.model_init import AtomModelSingleton
+from mineru.backend.pipeline.model_init import (
+    AtomModelSingleton,
+    run_ocr_inference,
+)
 from mineru.backend.pipeline.para_split import para_split
 from mineru.utils.char_utils import full_to_half
 from mineru.utils.cut_image import cut_image_and_table
 from mineru.utils.enum_class import ContentType, BlockType
-from mineru.utils.llm_aided import llm_aided_title
-from mineru.utils.model_utils import clean_memory
+from mineru.utils.title_level_postprocess import apply_title_leveling_to_pdf_info
 from mineru.backend.pipeline.pipeline_magic_model import MagicModel
 from mineru.utils.ocr_utils import OcrConfidence, rotate_vertical_crop_if_needed
 from mineru.version import __version__
 from mineru.utils.hash_utils import bytes_md5
-from mineru.utils.pdfium_guard import close_pdfium_document, pdfium_guard
+from mineru.utils.pdfium_guard import close_pdfium_child, close_pdfium_document, pdfium_guard
+from mineru.utils.span_pre_proc import (
+    _clear_post_ocr_fallback,
+    _restore_post_ocr_fallback,
+)
 
 
 def page_model_info_to_page_info(page_model_info, image_dict, page, image_writer, page_index, ocr_enable=False):
@@ -50,7 +52,6 @@ def page_model_info_to_page_info(page_model_info, image_dict, page, image_writer
             ContentType.IMAGE,
             ContentType.TABLE,
             ContentType.CHART,
-            ContentType.SEAL,
             ContentType.INTERLINE_EQUATION
         ]:
             span = cut_image_and_table(span, page_pil_img, page_img_md5, page_index, image_writer, scale=scale)
@@ -80,20 +81,24 @@ def append_page_model_infos_to_middle_json(
 ):
     for offset, (page_model_info, image_dict) in enumerate(zip(page_model_infos, images_list)):
         page_index = page_start_index + offset
-        with pdfium_guard():
-            page = pdf_doc[page_index]
-        page_info = page_model_info_to_page_info(
-            copy.deepcopy(page_model_info),
-            image_dict,
-            page,
-            image_writer,
-            page_index,
-            ocr_enable=ocr_enable,
-        )
-        if page_info is None:
+        page = None
+        try:
             with pdfium_guard():
-                page_w, page_h = map(int, pdf_doc[page_index].get_size())
-            page_info = make_page_info_dict([], page_index, page_w, page_h, [])
+                page = pdf_doc[page_index]
+            page_info = page_model_info_to_page_info(
+                copy.deepcopy(page_model_info),
+                image_dict,
+                page,
+                image_writer,
+                page_index,
+                ocr_enable=ocr_enable,
+            )
+            if page_info is None:
+                with pdfium_guard():
+                    page_w, page_h = map(int, page.get_size())
+                page_info = make_page_info_dict([], page_index, page_w, page_h, [])
+        finally:
+            close_pdfium_child(page)
         middle_json["pdf_info"].append(page_info)
         if progress_bar is not None:
             progress_bar.update(1)
@@ -234,7 +239,9 @@ def _apply_post_ocr(pdf_info_list, lang=None):
         det_db_box_thresh=0.3,
         lang=lang
     )
-    ocr_res_list = ocr_model.ocr(img_crop_list, det=False, tqdm_enable=True)[0]
+    ocr_res_list = run_ocr_inference(
+        ocr_model.ocr, img_crop_list, det=False, tqdm_enable=True
+    )[0]
     assert len(ocr_res_list) == len(
         need_ocr_list), f'ocr_res_list: {len(ocr_res_list)}, need_ocr_list: {len(need_ocr_list)}'
     for index, span in enumerate(need_ocr_list):
@@ -242,6 +249,9 @@ def _apply_post_ocr(pdf_info_list, lang=None):
         if ocr_score > OcrConfidence.min_confidence:
             span['content'] = ocr_text
             span['score'] = float(f"{ocr_score:.3f}")
+            _clear_post_ocr_fallback(span)
+        elif _restore_post_ocr_fallback(span):
+            continue
         else:
             span['content'] = ''
             span['score'] = 0.0
@@ -262,25 +272,27 @@ def _post_block_process(pdf_info_list):
                     block["type"] = BlockType.TEXT
 
 
-def finalize_middle_json(pdf_info_list, lang=None, ocr_enable=False):
-    """Apply document-level post processing once all page_info entries are ready."""
+def apply_server_side_postprocess(pdf_info_list, lang=None):
+    """执行只能在服务端完成的后处理；目前仅包含依赖 OCR 模型的 post-OCR。"""
     _apply_post_ocr(pdf_info_list, lang=lang)
+
+
+def finalize_middle_json_from_preproc(pdf_info_list):
+    """从 preproc_blocks 执行确定性 finalize，供服务端完整路径和客户端复用。"""
     _optimize_formula_number_blocks(pdf_info_list)
     para_split(pdf_info_list)
     cross_page_table_merge(pdf_info_list)
-
-    llm_aided_config = get_llm_aided_config()
-    if llm_aided_config is not None:
-        title_aided_config = llm_aided_config.get('title_aided', None)
-        if title_aided_config is not None and title_aided_config.get('enable', False):
-            llm_aided_title_start_time = time.time()
-            llm_aided_title(pdf_info_list, title_aided_config)
-            logger.info(f'llm aided title time: {round(time.time() - llm_aided_title_start_time, 2)}')
-
+    apply_title_leveling_to_pdf_info(pdf_info_list)
     _post_block_process(pdf_info_list)
 
-    if os.getenv('MINERU_DONOT_CLEAN_MEM') is None and len(pdf_info_list) >= 10:
-        clean_memory(get_device())
+
+def finalize_middle_json(
+    pdf_info_list,
+    lang=None,
+):
+    """Apply document-level post processing once all page_info entries are ready."""
+    apply_server_side_postprocess(pdf_info_list, lang=lang)
+    finalize_middle_json_from_preproc(pdf_info_list)
 
 
 def init_middle_json():
@@ -300,7 +312,7 @@ def result_to_middle_json(model_list, images_list, pdf_doc, image_writer, lang=N
             progress_bar=progress_bar,
         )
 
-    finalize_middle_json(middle_json["pdf_info"], lang=lang, ocr_enable=ocr_enable)
+    finalize_middle_json(middle_json["pdf_info"], lang=lang)
     close_pdfium_document(pdf_doc)
     return middle_json
 

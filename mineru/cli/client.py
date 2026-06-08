@@ -1,5 +1,6 @@
 # Copyright (c) Opendatalab. All rights reserved.
 import asyncio
+import multiprocessing
 import os
 import sys
 import threading
@@ -38,6 +39,7 @@ from mineru.cli.common import (
     uniquify_task_stems,
 )
 from mineru.cli import api_client as _api_client
+from mineru.cli.client_side_output import regenerate_client_side_outputs
 from mineru.cli.output_paths import resolve_parse_dir
 from mineru.cli.visualization import (
     VisualizationJob,
@@ -342,8 +344,12 @@ async def mark_task_completed(
 
 def create_visualization_context() -> Optional[VisualizationContext]:
     try:
+        spawn_context = multiprocessing.get_context("spawn")
         return VisualizationContext(
-            executor=ProcessPoolExecutor(max_workers=1),
+            executor=ProcessPoolExecutor(
+                max_workers=1,
+                mp_context=spawn_context,
+            ),
             futures=[],
         )
     except Exception as exc:
@@ -623,7 +629,12 @@ def build_request_form_data(
     server_url: Optional[str],
     start_page_id: int,
     end_page_id: Optional[int],
+    image_analysis: bool = True,
+    client_side_output_generation: bool = False,
 ) -> dict[str, str | list[str]]:
+    # 开启客户端输出生成时，只关闭客户端会重建的最终产物。
+    return_md = not client_side_output_generation
+    return_content_list = not client_side_output_generation
     return _api_client.build_parse_request_form_data(
         lang_list=[lang],
         backend=backend,
@@ -631,16 +642,18 @@ def build_request_form_data(
         formula_enable=formula_enable,
         table_enable=table_enable,
         md_page_anchor=md_page_anchor,
+        image_analysis=image_analysis,
         server_url=server_url,
         start_page_id=start_page_id,
         end_page_id=end_page_id,
-        return_md=True,
+        return_md=return_md,
         return_middle_json=True,
         return_model_output=True,
-        return_content_list=True,
+        return_content_list=return_content_list,
         return_images=True,
         response_format_zip=True,
         return_original_file=True,
+        client_side_output_generation=client_side_output_generation,
     )
 
 
@@ -769,6 +782,7 @@ async def run_planned_task(
     form_data: dict[str, str],
     output_dir: Path,
     live_renderer: Optional[LiveTaskStatusRenderer] = None,
+    client_side_output_generation: bool = False,
 ) -> None:
     logger.info(format_task_submission_message(planned_task, progress))
     submit_response = await submit_task(
@@ -802,6 +816,21 @@ async def run_planned_task(
         safe_extract_zip(zip_path, output_dir)
     finally:
         zip_path.unlink(missing_ok=True)
+    if client_side_output_generation:
+        for document in planned_task.documents:
+            # 解压后按现有 parse_dir 结构覆盖重生客户端最终输出产物。
+            parse_dir = resolve_parse_dir(
+                output_dir,
+                document.stem,
+                backend,
+                parse_method,
+                is_office=document.suffix in office_suffixes,
+            )
+            await asyncio.to_thread(
+                regenerate_client_side_outputs,
+                parse_dir,
+                document.stem,
+            )
     completed_tasks, completed_pages = await mark_task_completed(
         progress,
         planned_task.total_pages,
@@ -846,6 +875,8 @@ async def run_orchestrated_cli(
     formula_enable: bool,
     table_enable: bool,
     md_page_anchor: bool,
+    image_analysis: bool = True,
+    client_side_output_generation: bool = False,
     extra_cli_args: tuple[str, ...] = (),
 ) -> None:
     if start_page_id < 0:
@@ -913,9 +944,11 @@ async def run_orchestrated_cli(
                 formula_enable=formula_enable,
                 table_enable=table_enable,
                 md_page_anchor=md_page_anchor,
+                image_analysis=image_analysis,
                 server_url=server_url,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
+                client_side_output_generation=client_side_output_generation,
             )
             visualization_context = create_visualization_context()
             failures = await execute_planned_tasks(
@@ -932,6 +965,7 @@ async def run_orchestrated_cli(
                     form_data=form_data,
                     output_dir=output_dir,
                     live_renderer=live_renderer,
+                    client_side_output_generation=client_side_output_generation,
                 ),
             )
             if failures:
@@ -1099,6 +1133,23 @@ async def run_orchestrated_cli(
     default=False,
     help="Insert page-level anchors like [PAGE=1] into Markdown output. Default is disabled.",
 )
+@click.option(
+    "--image-analysis",
+    "image_analysis",
+    type=bool,
+    default=True,
+    help="Enable image/chart analysis for VLM and hybrid backends. Default is True. ",
+)
+@click.option(
+    "--client-side-output-generation",
+    "client_side_output_generation",
+    type=bool,
+    default=False,
+    help=(
+        "Generate markdown and content lists locally from server-returned "
+        "middle json, images, and original files."
+    ),
+)
 def main(
     ctx: click.Context,
     input_path: Path,
@@ -1113,6 +1164,8 @@ def main(
     formula_enable: bool,
     table_enable: bool,
     md_page_anchor: bool,
+    image_analysis: bool,
+    client_side_output_generation: bool,
 ) -> None:
     asyncio.run(
         run_orchestrated_cli(
@@ -1128,6 +1181,8 @@ def main(
             formula_enable=formula_enable,
             table_enable=table_enable,
             md_page_anchor=md_page_anchor,
+            image_analysis=image_analysis,
+            client_side_output_generation=client_side_output_generation,
             extra_cli_args=tuple(ctx.args),
         )
     )

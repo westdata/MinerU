@@ -4,6 +4,7 @@ import json
 import os
 import random
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -12,12 +13,12 @@ from contextlib import ExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Annotated, Any, Optional, Sequence
 
 import click
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from loguru import logger
@@ -46,6 +47,7 @@ from mineru.cli.api_client import (
     response_detail,
 )
 from mineru.cli.api_protocol import API_PROTOCOL_VERSION
+from mineru.cli.api_request import ParseRequestOptions, parse_request_form
 from mineru.cli.common import normalize_upload_filename
 from mineru.cli.public_http_client_policy import (
     configure_public_http_client_policy,
@@ -196,6 +198,24 @@ def resolve_connect_host(host: str) -> str:
     return host
 
 
+def reserve_unique_local_ports(count: int) -> list[int]:
+    """一次性占用并释放多个本地端口，降低并行启动 worker 时的端口重复风险。"""
+    if count <= 0:
+        return []
+
+    sockets: list[socket.socket] = []
+    try:
+        for _ in range(count):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            sock.listen(1)
+            sockets.append(sock)
+        return [int(sock.getsockname()[1]) for sock in sockets]
+    finally:
+        for sock in sockets:
+            sock.close()
+
+
 def normalize_local_device_type(device: str | None) -> str:
     """将 get_device() 返回值规范化为基础设备类型。"""
     if not device:
@@ -338,6 +358,10 @@ class MultipartPayload:
                 return value
         return None
 
+    def set_field_value(self, name: str, value: str) -> None:
+        self.fields = [(key, field_value) for key, field_value in self.fields if key != name]
+        self.fields.append((name, value))
+
 
 @dataclass
 class RouterTaskRecord:
@@ -393,7 +417,7 @@ class ManagedLocalServer:
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
-    async def start(self, client: httpx.AsyncClient) -> None:
+    async def start(self, client: httpx.AsyncClient, port: int | None = None) -> None:
         if self.is_running():
             return
 
@@ -401,7 +425,7 @@ class ManagedLocalServer:
         output_root = Path(self.temp_dir.name) / "output"
         output_root.mkdir(parents=True, exist_ok=True)
 
-        resolved_port = find_free_port()
+        resolved_port = port if port is not None else find_free_port()
         remaining_cli_args = strip_local_api_network_args(self.extra_cli_args)
         worker_cli_args = build_local_api_cli_args(
             remaining_cli_args,
@@ -588,20 +612,32 @@ class WorkerPool:
         return list(self._servers.values())
 
     async def start(self) -> None:
-        for server in self.servers:
-            if server.local_server is None:
-                continue
-            try:
-                await server.local_server.start(self.client)
-                server.base_url = normalize_base_url(server.local_server.base_url or "")
-            except Exception as exc:
-                server.healthy = False
-                server.last_error = str(exc)
-                server.last_checked_at = utc_now_iso()
+        local_servers = [
+            server for server in self.servers if server.local_server is not None
+        ]
+        local_ports = reserve_unique_local_ports(len(local_servers))
+        await asyncio.gather(
+            *(
+                self._start_local_server(server, port)
+                for server, port in zip(local_servers, local_ports)
+            )
+        )
 
         await self.refresh_all()
         if self._monitor_task is None or self._monitor_task.done():
             self._monitor_task = asyncio.create_task(self._monitor_loop(), name="mineru-router-worker-monitor")
+
+    async def _start_local_server(self, server: WorkerState, port: int) -> None:
+        """启动单个本地 worker，并把启动失败限制在该 worker 状态内。"""
+        if server.local_server is None:
+            return
+        try:
+            await server.local_server.start(self.client, port=port)
+            server.base_url = normalize_base_url(server.local_server.base_url or "")
+        except Exception as exc:
+            server.healthy = False
+            server.last_error = str(exc)
+            server.last_checked_at = utc_now_iso()
 
     async def shutdown(self) -> None:
         if self._monitor_task is not None:
@@ -1081,6 +1117,36 @@ async def stage_multipart_request(request: Request) -> MultipartPayload:
     return MultipartPayload(temp_dir=temp_dir, fields=fields, uploads=uploads)
 
 
+def apply_request_option_overrides(
+    payload: MultipartPayload,
+    request_options: ParseRequestOptions,
+) -> None:
+    payload.set_field_value("return_md", str(request_options.return_md).lower())
+    payload.set_field_value(
+        "return_middle_json",
+        str(request_options.return_middle_json).lower(),
+    )
+    payload.set_field_value(
+        "return_model_output",
+        str(request_options.return_model_output).lower(),
+    )
+    payload.set_field_value(
+        "return_content_list",
+        str(request_options.return_content_list).lower(),
+    )
+    payload.set_field_value("return_images", str(request_options.return_images).lower())
+    payload.set_field_value(
+        "return_original_file",
+        str(request_options.return_original_file).lower(),
+    )
+    payload.set_field_value(
+        "client_side_output_generation",
+        str(request_options.client_side_output_generation).lower(),
+    )
+    payload.set_field_value("md_page_anchor", str(request_options.md_page_anchor).lower())
+    payload.set_field_value("image_analysis", str(request_options.image_analysis).lower())
+
+
 def parse_submit_response(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("MinerU upstream returned an invalid submit payload")
@@ -1472,11 +1538,25 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
     def enforce_api_auth(request: Request) -> None:
         validate_api_key_request(request)
 
-    @app.post(path="/tasks", status_code=202)
-    async def submit_parse_task(http_request: Request):
+    @app.post(
+        path="/tasks",
+        status_code=202,
+        summary="Submit an asynchronous parse task through the router",
+        description=(
+            "Submit files and parse options to a healthy upstream MinerU API "
+            "server selected by the router, then return a router task id."
+        ),
+    )
+    async def submit_parse_task(
+        http_request: Request,
+        request_options: Annotated[
+            ParseRequestOptions, Depends(parse_request_form)
+        ],
+    ):
         enforce_api_auth(http_request)
         payload = await stage_multipart_request(http_request)
         try:
+            apply_request_option_overrides(payload, request_options)
             router_task = await submit_router_task(http_request, payload)
         finally:
             payload.cleanup()
@@ -1521,11 +1601,26 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
             )
         return await proxy_router_task_result(request, task)
 
-    @app.post(path="/file_parse", status_code=200)
-    async def file_parse(request: Request):
+    @app.post(
+        path="/file_parse",
+        status_code=200,
+        summary="Synchronously parse uploaded files through the router",
+        description=(
+            "Submit files and parse options to a healthy upstream MinerU API "
+            "server selected by the router, wait for completion, and proxy the "
+            "final result in the same response."
+        ),
+    )
+    async def file_parse(
+        request: Request,
+        request_options: Annotated[
+            ParseRequestOptions, Depends(parse_request_form)
+        ],
+    ):
         enforce_api_auth(request)
         payload = await stage_multipart_request(request)
         try:
+            apply_request_option_overrides(payload, request_options)
             router_task = await submit_router_task(request, payload)
         finally:
             payload.cleanup()
@@ -1544,7 +1639,6 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
 
     @app.get(path="/health")
     async def health_check(request: Request):
-        enforce_api_auth(request)
         worker_pool: WorkerPool = request.app.state.worker_pool
         healthy, payload = worker_pool.health_payload()
         if healthy:

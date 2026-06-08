@@ -22,6 +22,12 @@ Options:
   -f, --formula BOOLEAN           Enable formula parsing (default: enabled)
   -t, --table BOOLEAN             Enable table parsing (default: enabled)
   --md-page-anchor                Insert page-level anchors like [PAGE=1] into Markdown output. Disabled by default.
+  --image-analysis BOOLEAN        Enable image/chart analysis for VLM and hybrid backends
+                                  (default: enabled)
+  --client-side-output-generation BOOLEAN
+                                  Generate Markdown and content lists locally
+                                  from server-returned middle JSON, images, and
+                                  original files (default: disabled)
   --help                          Show help information
 ```
 > [!TIP]
@@ -46,7 +52,7 @@ Usage: mineru-gradio [OPTIONS]
 Options:
   --enable-example BOOLEAN        Enable example files for input. The example
                                   files to be input need to be placed in the
-                                  `example` folder within the directory where
+                                  `examples` folder within the directory where
                                   the command is currently executed.
   --enable-http-client BOOLEAN    Enable http-client backend to link openai-
                                   compatible servers.
@@ -60,6 +66,9 @@ Options:
                                   starts a reusable local mineru-api service.
   --enable-vlm-preload BOOLEAN    Preload the local VLM model when gradio
                                   starts a local mineru-api service.
+  --client-side-output-generation BOOLEAN
+                                  Generate Markdown and content lists locally
+                                  from server-returned middle JSON.
   --latex-delimiters-type [a|b|all]
                                   Set the type of LaTeX delimiters to use in
                                   Markdown rendering: 'a' for type '$', 'b' for

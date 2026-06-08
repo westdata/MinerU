@@ -1,4 +1,5 @@
 # Copyright (c) Opendatalab. All rights reserved.
+import asyncio
 import importlib
 import importlib.util
 import json
@@ -22,7 +23,10 @@ from mineru.backend.vlm.vlm_analyze import aio_doc_analyze as aio_vlm_doc_analyz
 from mineru.backend.office.pptx_analyze import office_pptx_analyze
 from mineru.backend.office.xlsx_analyze import office_xlsx_analyze
 from mineru.backend.office.docx_analyze import office_docx_analyze
-from mineru.utils.pdfium_guard import rewrite_pdf_bytes_with_pdfium
+from mineru.utils.pdfium_guard import (
+    get_loadable_pdfium_page_indices,
+    rewrite_pdf_bytes_with_pdfium,
+)
 
 os.environ["TORCH_CUDNN_V8_API_DISABLED"] = "1"
 if os.getenv("MINERU_LMDEPLOY_DEVICE", "") == "maca":
@@ -189,11 +193,49 @@ def convert_pdf_bytes_to_bytes(pdf_bytes, start_page_id=0, end_page_id=None):
         )
         if rebuilt_pdf_bytes:
             return rebuilt_pdf_bytes
-        logger.warning("PDFium rewrite returned empty bytes, using original PDF bytes.")
+        logger.warning(
+            "PDFium rewrite returned empty bytes, trying to skip broken pages."
+        )
     except Exception as fallback_error:
         logger.warning(
             f"Error in converting PDF bytes with pdfium: {fallback_error}, "
+            "trying to skip broken pages."
+        )
+
+    try:
+        loadable_page_indices, broken_page_indices = get_loadable_pdfium_page_indices(
+            pdf_bytes,
+            start_page_id=start_page_id,
+            end_page_id=end_page_id,
+        )
+        if broken_page_indices:
+            skipped_pages = [page_index + 1 for page_index in broken_page_indices]
+            logger.warning(
+                f"Skipped broken PDF pages during PDFium rewrite: {skipped_pages}"
+            )
+        if not loadable_page_indices:
+            logger.warning(
+                "PDFium skip-broken-page rewrite found no loadable pages, "
+                "using original PDF bytes."
+            )
+            return pdf_bytes
+
+        rebuilt_pdf_bytes = rewrite_pdf_bytes_with_pdfium(
+            pdf_bytes,
+            start_page_id=start_page_id,
+            end_page_id=end_page_id,
+            page_indices=loadable_page_indices,
+        )
+        if rebuilt_pdf_bytes:
+            return rebuilt_pdf_bytes
+        logger.warning(
+            "PDFium skip-broken-page rewrite returned empty bytes, "
             "using original PDF bytes."
+        )
+    except Exception as fallback_error:
+        logger.warning(
+            "Error in converting PDF bytes with skip-broken-page fallback: "
+            f"{fallback_error}, using original PDF bytes."
         )
     return pdf_bytes
 
@@ -325,6 +367,7 @@ def _process_pipeline(
         f_dump_content_list,
         f_make_md_mode,
         md_page_anchor=False,
+        client_side_output_generation=False,
 ):
     """处理pipeline后端逻辑"""
     from mineru.backend.pipeline.pipeline_analyze import doc_analyze_streaming as pipeline_doc_analyze_streaming
@@ -375,6 +418,7 @@ def _process_pipeline(
             parse_method=parse_method,
             formula_enable=p_formula_enable,
             table_enable=p_table_enable,
+            client_side_output_generation=client_side_output_generation,
         )
 
         for future in output_futures:
@@ -652,6 +696,8 @@ def do_parse(
         md_page_anchor=False,
         start_page_id=0,
         end_page_id=None,
+        image_analysis=True,
+        client_side_output_generation=False,
         **kwargs,
 ):
     need_remove_index = _process_office_doc(
@@ -681,7 +727,9 @@ def do_parse(
             output_dir, pdf_file_names, pdf_bytes_list, p_lang_list,
             parse_method, formula_enable, table_enable,
             f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
-            f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode, md_page_anchor
+            f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
+            md_page_anchor=md_page_anchor,
+            client_side_output_generation=client_side_output_generation,
         )
     else:
         if backend.startswith("vlm-"):
@@ -701,7 +749,8 @@ def do_parse(
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
                 md_page_anchor,
-                server_url, **kwargs,
+                server_url, image_analysis=image_analysis,
+                client_side_output_generation=client_side_output_generation, **kwargs,
             )
         elif backend.startswith("hybrid-"):
             ensure_backend_dependencies(backend)
@@ -722,7 +771,8 @@ def do_parse(
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
                 md_page_anchor,
-                server_url, **kwargs,
+                server_url, image_analysis=image_analysis,
+                client_side_output_generation=client_side_output_generation, **kwargs,
             )
 
 
@@ -747,9 +797,13 @@ async def aio_do_parse(
         md_page_anchor=False,
         start_page_id=0,
         end_page_id=None,
+        image_analysis=True,
+        client_side_output_generation=False,
         **kwargs,
 ):
-    need_remove_index = _process_office_doc(
+    # Office 解析是同步且可能耗时的操作，异步入口需要放到线程中避免阻塞事件循环。
+    need_remove_index = await asyncio.to_thread(
+        _process_office_doc,
         output_dir,
         pdf_file_names=pdf_file_names,
         pdf_bytes_list=pdf_bytes_list,
@@ -777,7 +831,9 @@ async def aio_do_parse(
             output_dir, pdf_file_names, pdf_bytes_list, p_lang_list,
             parse_method, formula_enable, table_enable,
             f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
-            f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode, md_page_anchor
+            f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
+            md_page_anchor=md_page_anchor,
+            client_side_output_generation=client_side_output_generation,
         )
     else:
         if backend.startswith("vlm-"):
@@ -797,7 +853,8 @@ async def aio_do_parse(
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
                 md_page_anchor,
-                server_url, **kwargs,
+                server_url, image_analysis=image_analysis,
+                client_side_output_generation=client_side_output_generation, **kwargs,
             )
         elif backend.startswith("hybrid-"):
             ensure_backend_dependencies(backend)
@@ -817,7 +874,8 @@ async def aio_do_parse(
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
                 md_page_anchor,
-                server_url, **kwargs,
+                server_url, image_analysis=image_analysis,
+                client_side_output_generation=client_side_output_generation, **kwargs,
             )
 
 

@@ -427,8 +427,12 @@ def doc_analyze(
     backend="transformers",
     model_path: str | None = None,
     server_url: str | None = None,
+    image_analysis: bool = True,
     **kwargs,
 ):
+    client_side_output_generation = bool(
+        kwargs.pop("client_side_output_generation", False)
+    )
     if predictor is None:
         predictor = ModelSingleton().get_model(backend, model_path, server_url, **kwargs)
     predictor = _maybe_enable_serial_execution(predictor, backend)
@@ -472,7 +476,10 @@ def doc_analyze(
                         f'({len(images_pil_list)} pages)'
                     )
                     with predictor_execution_guard(predictor):
-                        window_results = predictor.batch_two_step_extract(images=images_pil_list)
+                        window_results = predictor.batch_two_step_extract(
+                            images=images_pil_list,
+                            image_analysis=image_analysis,
+                        )
                     results.extend(window_results)
                     if progress_bar is None:
                         progress_bar = tqdm(total=page_count, desc="Processing pages")
@@ -503,7 +510,8 @@ def doc_analyze(
                 f"processing-window infer finished, cost: {infer_time}, "
                 f"speed: {round(len(results) / infer_time, 3)} page/s"
             )
-        finalize_middle_json(middle_json["pdf_info"])
+        if not client_side_output_generation:
+            finalize_middle_json(middle_json["pdf_info"])
         close_pdfium_document(pdf_doc)
         doc_closed = True
         return middle_json, results
@@ -519,8 +527,12 @@ async def aio_doc_analyze(
     backend="transformers",
     model_path: str | None = None,
     server_url: str | None = None,
+    image_analysis: bool = True,
     **kwargs,
 ):
+    client_side_output_generation = bool(
+        kwargs.pop("client_side_output_generation", False)
+    )
     if predictor is None:
         predictor = await _get_model_async(backend, model_path, server_url, **kwargs)
     predictor = _maybe_enable_serial_execution(predictor, backend)
@@ -563,7 +575,10 @@ async def aio_doc_analyze(
                         f'({len(images_pil_list)} pages)'
                     )
                     async with aio_predictor_execution_guard(predictor):
-                        window_results = await predictor.aio_batch_two_step_extract(images=images_pil_list)
+                        window_results = await predictor.aio_batch_two_step_extract(
+                            images=images_pil_list,
+                            image_analysis=image_analysis,
+                        )
                     results.extend(window_results)
                     if progress_bar is None:
                         progress_bar = tqdm(total=page_count, desc="Processing pages")
@@ -594,7 +609,8 @@ async def aio_doc_analyze(
                 f"processing-window infer finished, cost: {infer_time}, "
                 f"speed: {round(len(results) / infer_time, 3)} page/s"
             )
-        finalize_middle_json(middle_json["pdf_info"])
+        if not client_side_output_generation:
+            await asyncio.to_thread(finalize_middle_json, middle_json["pdf_info"])
         close_pdfium_document(pdf_doc)
         doc_closed = True
         return middle_json, results
