@@ -21,6 +21,7 @@ debug/
 build/
 dist/
 *.egg
+uv.lock
 
 # vscode history
 .history
