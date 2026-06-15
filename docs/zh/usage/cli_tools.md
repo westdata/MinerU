@@ -12,18 +12,19 @@ Options:
   -o, --output PATH               输出目录（必填）
   --api-url TEXT                  MinerU FastAPI 服务地址；不传时自动拉起本地临时 mineru-api
   -m, --method [auto|txt|ocr]     解析方法：auto（默认）、txt、ocr（仅用于 pipeline 与 hybrid* 后端）
-  -b, --backend [pipeline|hybrid-auto-engine|hybrid-http-client|vlm-auto-engine|vlm-http-client]
-                                  解析后端（默认为 hybrid-auto-engine）
+  -b, --backend [pipeline|vlm-engine|hybrid-engine|vlm-http-client|hybrid-http-client]
+                                  解析后端（默认为 hybrid-engine）
+  --effort [medium|high]          Hybrid 解析强度（默认：medium）
   -l, --lang [ch|ch_server|ch_lite|en|korean|japan|chinese_cht|ta|te|ka|th|el|latin|arabic|east_slavic|cyrillic|devanagari]
-                                  指定文档语言（可提升 OCR 准确率，仅用于 pipeline 与 hybrid* 后端）
+                                  指定文档语言（可提升 OCR 准确率，仅用于 pipeline 后端）
   -u, --url TEXT                  当使用 http-client 时，传给服务端后端的 OpenAI 兼容地址
   -s, --start INTEGER             开始解析的页码（从 0 开始）
   -e, --end INTEGER               结束解析的页码（从 0 开始）
   -f, --formula BOOLEAN           是否启用公式解析（默认开启）
   -t, --table BOOLEAN             是否启用表格解析（默认开启）
   --md-page-anchor                在 Markdown 输出中插入页级锚点，如 [PAGE=1]（默认关闭）
-  --image-analysis BOOLEAN        是否启用 VLM / hybrid 后端的图片与图表分析
-                                  （默认开启）
+  --image-analysis BOOLEAN        是否启用 VLM 与 hybrid 的图片/图表分析；Hybrid
+                                  medium 强度会自动关闭图片/图表分析（默认开启）
   --client-side-output-generation BOOLEAN
                                   在客户端基于服务端返回的 middle JSON、图片与原文件
                                   生成 Markdown 和 content list（默认关闭）
@@ -185,10 +186,6 @@ MinerU命令行工具的某些参数存在相同功能的环境变量配置，�
       <= 4   GB         | 4
       <= 3   GB         | 2
       <= 2   GB         | 1
-
-- `MINERU_HYBRID_FORCE_PIPELINE_ENABLE`：
-    * 用于强制将 hybrid-* 后端中的 文本提取部分使用 小模型 进行处理
-    * 默认为`false`，可通过环境变量设置为`true`来启用该功能，从而在某些极端情况下减少幻觉的发生。
 
 - `MINERU_VL_MODEL_NAME`：
     * 用于指定 vlm/hybrid 后端使用的模型名称，这将允许您在同时存在多个模型的远程openai-server中指定 MinerU 运行所需的模型。
